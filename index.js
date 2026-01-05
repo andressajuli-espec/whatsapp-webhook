@@ -9,16 +9,17 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
-// Controle de estado
+// Controle de estado em memória
 const users = {};
 
-// Função de envio de mensagem
+// Função para envio de mensagens
 async function sendMessage(to, body) {
   await axios.post(
     `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: "whatsapp",
       to,
+      type: "text",
       text: { body }
     },
     {
@@ -30,8 +31,8 @@ async function sendMessage(to, body) {
   );
 }
 
-// Webhook verification
-app.get("/", (req, res) => {
+// Verificação do webhook
+app.get(["/", "/webhook"], (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -42,41 +43,59 @@ app.get("/", (req, res) => {
   return res.sendStatus(403);
 });
 
-// Webhook receiver
-app.post("/", async (req, res) => {
+// Recebimento de mensagens
+app.post(["/", "/webhook"], async (req, res) => {
   try {
-    const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!msg) return res.sendStatus(200);
+    const entry = req.body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
 
-    const from = msg.from;
-    const text = msg.text?.body?.trim();
+    // Ignora eventos que não sejam mensagens
+    if (!value?.messages) {
+      return res.sendStatus(200);
+    }
 
-    if (!users[from]) users[from] = { step: 0, data: {} };
+    const message = value.messages[0];
+
+    // Aceita apenas mensagens de texto
+    if (message.type !== "text") {
+      return res.sendStatus(200);
+    }
+
+    const from = message.from;
+    const text = message.text.body.trim();
+
+    console.log("Mensagem recebida:", text, "De:", from);
+
+    if (!users[from]) {
+      users[from] = { step: 0, data: {} };
+    }
 
     const user = users[from];
 
-    // INÍCIO
+    // ===== INÍCIO =====
     if (user.step === 0) {
       user.step = 1;
-      return sendMessage(
+      await sendMessage(
         from,
-        `Olá! 👋  
-Seja bem-vindo(a) à *CWB Finance*.
+        `Olá!  
+Você entrou em contato com a *CWB Finance*.
 
 Para agilizar seu atendimento, escolha uma opção:
 
 1️⃣ Precatórios  
 2️⃣ Seguro Auto  
-3️⃣ Assessoria Financeira`
+3️⃣ Assessoria`
       );
+      return res.sendStatus(200);
     }
 
-    // MENU PRINCIPAL
+    // ===== MENU PRINCIPAL =====
     if (user.step === 1) {
       if (text === "1") {
-        user.flow = "precatório";
+        user.flow = "precatorio";
         user.step = 10;
-        return sendMessage(
+        await sendMessage(
           from,
           `Perfeito.
 
@@ -86,94 +105,108 @@ Seu precatório é de qual esfera?
 2️⃣ Estadual  
 3️⃣ Municipal`
         );
+        return res.sendStatus(200);
       }
 
       if (text === "2") {
         user.flow = "seguro";
         user.step = 20;
-        return sendMessage(
+        await sendMessage(
           from,
-          `Para que possamos prosseguir, informe por gentileza o *nome completo da pessoa que será assegurada*.`
+          `Para prosseguirmos, informe o *nome completo da pessoa que será assegurada*.`
         );
+        return res.sendStatus(200);
       }
 
       if (text === "3") {
         user.flow = "assessoria";
         user.step = 30;
-        return sendMessage(
+        await sendMessage(
           from,
           `Por gentileza, informe seu *nome completo*.`
         );
+        return res.sendStatus(200);
       }
     }
 
     // ===== PRECATÓRIOS =====
-    if (user.flow === "precatório") {
+    if (user.flow === "precatorio") {
       if (user.step === 10) {
         user.data.esfera = text;
         user.step = 11;
-        return sendMessage(
+        await sendMessage(
           from,
-          `Para que possamos compreender melhor sua situação, informe a opção que melhor o representa:
+          `Para que possamos entender melhor, informe a opção que melhor se enquadra:
 
 1️⃣ Proprietário do precatório  
 2️⃣ Patrono  
 3️⃣ Terceiro interessado`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 11) {
         user.data.perfil = text;
         user.step = text === "3" ? 14 : 12;
-        return sendMessage(
+
+        await sendMessage(
           from,
           text === "3"
-            ? `Por gentileza, informe o *seu nome completo*.`
+            ? `Informe, por gentileza, o *seu nome completo*.`
             : `Informe o *CPF do titular do precatório*  
 (Apenas números. Exemplo: 99988877766)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 12) {
-        user.data.cpf = text;
+        user.data.cpfTitular = text;
         user.step = 13;
-        return sendMessage(from, `Informe o *nome completo*.`);
+        await sendMessage(from, `Informe o *nome completo*.`);
+        return res.sendStatus(200);
       }
 
       if (user.step === 13) {
-        user.data.nome = text;
+        user.data.nomeTitular = text;
         user.step = 16;
-        return sendMessage(
+        await sendMessage(
           from,
           `Informe o *número do processo*  
 (Apenas números)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 14) {
         user.data.nomeTerceiro = text;
         user.step = 15;
-        return sendMessage(
+        await sendMessage(
           from,
           `Informe o *CPF do titular do precatório*  
 (Apenas números)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 15) {
         user.data.cpfTitular = text;
         user.step = 17;
-        return sendMessage(from, `Informe o *nome completo do titular do precatório*.`);
+        await sendMessage(
+          from,
+          `Informe o *nome completo do titular do precatório*.`
+        );
+        return res.sendStatus(200);
       }
 
       if (user.step === 17) {
         user.data.nomeTitular = text;
         user.step = 16;
-        return sendMessage(
+        await sendMessage(
           from,
           `Informe o *número do processo*  
 (Apenas números)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 16) {
@@ -187,30 +220,33 @@ Seu precatório é de qual esfera?
       if (user.step === 20) {
         user.data.nome = text;
         user.step = 21;
-        return sendMessage(
+        await sendMessage(
           from,
           `Informe o *CPF*  
 (Apenas números. Exemplo: 99988877766)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 21) {
         user.data.cpf = text;
         user.step = 22;
-        return sendMessage(
+        await sendMessage(
           from,
           `Informe o *CEP*  
 (Apenas números. Exemplo: 00999888)`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 22) {
         user.data.cep = text;
         user.step = 23;
-        return sendMessage(
+        await sendMessage(
           from,
-          `Informe o *endereço completo*, incluindo rua, número da residência e bairro.`
+          `Informe o *endereço completo*, incluindo rua, número e bairro.`
         );
+        return res.sendStatus(200);
       }
 
       if (user.step === 23) {
@@ -227,20 +263,21 @@ Seu precatório é de qual esfera?
       }
     }
 
-    // FINALIZAÇÃO
+    // ===== FINALIZAÇÃO =====
     if (user.step === 99) {
       delete users[from];
-      return sendMessage(
+      await sendMessage(
         from,
         `Perfeito.
 
 Aguarde um momento. Em breve um especialista da *CWB Finance* entrará em contato para dar continuidade ao seu atendimento.`
       );
+      return res.sendStatus(200);
     }
 
     res.sendStatus(200);
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    console.error("Erro no webhook:", error.response?.data || error.message);
     res.sendStatus(500);
   }
 });
